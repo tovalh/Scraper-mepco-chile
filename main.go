@@ -5,6 +5,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"log"
 	"os"
@@ -19,11 +20,11 @@ import (
 func main() {
 	log.SetFlags(log.LstdFlags)
 
-	fecha := flag.String("fecha", "", "dia del Diario Oficial a leer (YYYY-MM-DD), por defecto hoy")
+	fecha := flag.String("fecha", "", "dia del Diario Oficial a leer (YYYY-MM-DD), por defecto el miercoles vigente")
 	soloLeer := flag.Bool("solo-leer", false, "muestra lo que encuentra sin tocar la base")
 	flag.Parse()
 
-	dia := time.Now()
+	dia := diaVigente(time.Now())
 	if *fecha != "" {
 		d, err := time.Parse("2006-01-02", *fecha)
 		if err != nil {
@@ -34,6 +35,10 @@ func main() {
 
 	p, err := diariooficial.Buscar(dia)
 	if err != nil {
+		if errors.Is(err, diariooficial.ErrSinDecreto) {
+			log.Printf("nada que hacer: %v", err)
+			return
+		}
 		log.Fatalf("diario oficial: %v", err)
 	}
 
@@ -61,6 +66,17 @@ func main() {
 	if fallos > 0 {
 		os.Exit(1)
 	}
+}
+
+// diaVigente retrocede hasta el miercoles mas reciente: el Diario Oficial
+// publica el decreto ese dia, y correr el programa cualquier otro dia de la
+// semana (cron fuera de horario, gatillo manual) debe encontrar igual el
+// decreto de la semana en curso.
+func diaVigente(t time.Time) time.Time {
+	for t.Weekday() != time.Wednesday {
+		t = t.AddDate(0, 0, -1)
+	}
+	return t
 }
 
 func guardar(bc config.Base, p diariooficial.Periodo) error {

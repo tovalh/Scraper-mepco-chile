@@ -3,6 +3,7 @@ package diariooficial
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,11 @@ import (
 
 	"github.com/ledongthuc/pdf"
 )
+
+// ErrSinDecreto indica que ninguna edicion del dia trae el decreto: no es un
+// fallo de scraping, simplemente ese dia no hay nada publicado (no era
+// miercoles, o el Diario Oficial todavia no lo sube).
+var ErrSinDecreto = errors.New("ninguna edicion trae el decreto de componente variable")
 
 const baseURL = "https://www.diariooficial.interior.gob.cl"
 
@@ -101,7 +107,7 @@ func Buscar(dia time.Time) (Periodo, error) {
 	}
 
 	if ultimo == nil {
-		return Periodo{}, fmt.Errorf("ninguna edicion del %s trae el decreto", fecha)
+		return Periodo{}, fmt.Errorf("%s: %w", fecha, ErrSinDecreto)
 	}
 	return *ultimo, nil
 }
