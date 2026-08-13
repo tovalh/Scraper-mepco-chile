@@ -1,0 +1,5 @@
+.env
+mepco
+mepco.exe
+*.exe
+.idea/

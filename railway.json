@@ -1,0 +1,11 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "buildCommand": "go build -o mepco ."
+  },
+  "deploy": {
+    "startCommand": "./mepco",
+    "cronSchedule": "0 12,15,18,21 * * 3"
+  }
+}
