@@ -19,17 +19,24 @@ type Config struct {
 	Bases []Base
 }
 
-func Load() (*Config, error) {
+// Load lee las bases declaradas en <prefix>_DBS (ej. "MEPCO", "UTMUF").
+// Las variables DB_<NOMBRE>_* son compartidas entre herramientas: si mepco
+// y utm-uf apuntan a la misma base fisica, basta con declararla en ambas
+// listas de prefijo y comparten el mismo DB_<NOMBRE>_DSN/USER.
+func Load(prefix string) (*Config, error) {
 	if ruta := buscarEnv(); ruta != "" {
 		if err := cargarArchivo(ruta); err != nil {
 			return nil, fmt.Errorf("leyendo %s: %w", ruta, err)
 		}
 	}
 
-	lista := os.Getenv("MEPCO_DBS")
+	varLista := prefix + "_DBS"
+	lista := os.Getenv(varLista)
 	if strings.TrimSpace(lista) == "" {
-		return nil, fmt.Errorf("MEPCO_DBS no esta definida")
+		return nil, fmt.Errorf("%s no esta definida", varLista)
 	}
+
+	usuarioPorDefecto := "cron_" + strings.ToLower(prefix)
 
 	cfg := &Config{}
 	for _, nombre := range strings.Split(lista, ",") {
@@ -38,7 +45,7 @@ func Load() (*Config, error) {
 			continue
 		}
 
-		// Cada base declarada en MEPCO_DBS trae sus variables con prefijo DB_<NOMBRE>_.
+		// Cada base declarada trae sus variables con prefijo DB_<NOMBRE>_.
 		pref := "DB_" + strings.ToUpper(nombre) + "_"
 
 		dsn := os.Getenv(pref + "DSN")
@@ -48,14 +55,14 @@ func Load() (*Config, error) {
 
 		user := os.Getenv(pref + "USER")
 		if user == "" {
-			user = "cron_mepco"
+			user = usuarioPorDefecto
 		}
 
 		cfg.Bases = append(cfg.Bases, Base{Nombre: nombre, DSN: dsn, User: user})
 	}
 
 	if len(cfg.Bases) == 0 {
-		return nil, fmt.Errorf("MEPCO_DBS no declaro ninguna base valida")
+		return nil, fmt.Errorf("%s no declaro ninguna base valida", varLista)
 	}
 	return cfg, nil
 }

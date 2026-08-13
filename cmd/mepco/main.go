@@ -1,6 +1,6 @@
 // Carga el impuesto especifico a los combustibles desde el Diario Oficial.
 //
-//	go build -o mepco .
+//	go build -o mepco ./cmd/mepco
 //	0 9,19 * * 3  /opt/mepco/mepco >> /var/log/mepco.log 2>&1
 package main
 
@@ -25,32 +25,40 @@ func main() {
 	flag.Parse()
 
 	dia := diaVigente(time.Now())
+	origen := "miercoles vigente"
 	if *fecha != "" {
 		d, err := time.Parse("2006-01-02", *fecha)
 		if err != nil {
 			log.Fatalf("fecha invalida: %v", err)
 		}
 		dia = d
+		origen = "fecha manual"
 	}
+
+	log.Printf("=== mepco: inicio (dia=%s %s, solo-leer=%v) ===", dia.Format("2006-01-02"), origen, *soloLeer)
 
 	p, err := diariooficial.Buscar(dia)
 	if err != nil {
 		if errors.Is(err, diariooficial.ErrSinDecreto) {
 			log.Printf("nada que hacer: %v", err)
+			log.Printf("=== mepco: fin (nada que hacer) ===")
 			return
 		}
 		log.Fatalf("diario oficial: %v", err)
 	}
 
-	log.Printf("vigencia %s a %s | 93=%.4f 97=%.4f 95=%.4f diesel=%.4f",
-		p.Desde.Format("2006-01-02"), p.Hasta().Format("2006-01-02"),
-		p.V93, p.V97, p.V95(), p.Diesel)
+	log.Printf("Resultado vigencia %s a %s:", p.Desde.Format("2006-01-02"), p.Hasta().Format("2006-01-02"))
+	log.Printf("  93     : %.4f", p.V93)
+	log.Printf("  95     : %.4f", p.V95())
+	log.Printf("  97     : %.4f", p.V97)
+	log.Printf("  DIESEL : %.4f", p.Diesel)
 
 	if *soloLeer {
+		log.Printf("=== mepco: fin (solo-leer, no se toco la base) ===")
 		return
 	}
 
-	cfg, err := config.Load()
+	cfg, err := config.Load("MEPCO")
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
@@ -63,6 +71,7 @@ func main() {
 		}
 	}
 
+	log.Printf("=== mepco: fin (%d base(s) OK, %d fallo(s)) ===", len(cfg.Bases)-fallos, fallos)
 	if fallos > 0 {
 		os.Exit(1)
 	}

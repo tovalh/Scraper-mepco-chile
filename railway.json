@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "RAILPACK",
-    "buildCommand": "go build -o mepco ."
+    "buildCommand": "go build -o mepco ./cmd/mepco"
   },
   "deploy": {
     "startCommand": "./mepco",

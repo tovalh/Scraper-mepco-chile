@@ -4,11 +4,10 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"time"
-
-	_ "github.com/go-sql-driver/mysql"
+	"log"
 
 	"script_combustibles/internal/config"
+	"script_combustibles/internal/db"
 	"script_combustibles/internal/diariooficial"
 )
 
@@ -34,18 +33,11 @@ type Base struct {
 }
 
 func Abrir(c config.Base) (*Base, error) {
-	db, err := sql.Open("mysql", c.DSN)
+	conn, err := db.Abrir(c.Nombre, c.DSN)
 	if err != nil {
 		return nil, err
 	}
-	db.SetConnMaxLifetime(time.Minute)
-	db.SetMaxOpenConns(4)
-
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("no responde: %w", err)
-	}
-	return &Base{Nombre: c.Nombre, user: c.User, db: db}, nil
+	return &Base{Nombre: c.Nombre, user: c.User, db: conn}, nil
 }
 
 func (b *Base) Close() error { return b.db.Close() }
@@ -54,6 +46,7 @@ func (b *Base) Close() error { return b.db.Close() }
 // preferimos abortar antes que grabar en el ID equivocado.
 func (b *Base) ResolverIDs() (map[string]int, error) {
 	ids := make(map[string]int, len(Catalogo))
+	log.Printf("[DB] resolviendo catalogo:")
 
 	for _, c := range Catalogo {
 		var (
@@ -89,6 +82,12 @@ func (b *Base) ResolverIDs() (map[string]int, error) {
 				c.Clave, c.CodigoSII, c.Subcodigo, len(enc), enc)
 		}
 		ids[c.Clave] = enc[0]
+
+		if c.Subcodigo == "" {
+			log.Printf("[DB]   %-6s (codigosii=%d)                  -> idcon_impuesto=%d", c.Clave, c.CodigoSII, enc[0])
+		} else {
+			log.Printf("[DB]   %-6s (codigosii=%d subcodigo=%s)     -> idcon_impuesto=%d", c.Clave, c.CodigoSII, c.Subcodigo, enc[0])
+		}
 	}
 	return ids, nil
 }
@@ -119,6 +118,7 @@ func (b *Base) Guardar(ids map[string]int, p diariooficial.Periodo) (string, []s
 	}
 
 	if len(actuales) == 0 {
+		log.Printf("[DB] periodo fechadesde=%s en %q: no existe -> inserta", desde, b.Nombre)
 		if err := b.insertar(ids, desde, hasta, nuevos); err != nil {
 			return "", nil, err
 		}
@@ -133,9 +133,11 @@ func (b *Base) Guardar(ids map[string]int, p diariooficial.Periodo) (string, []s
 		}
 	}
 	if len(cambios) == 0 {
+		log.Printf("[DB] periodo fechadesde=%s en %q: existe, valores identicos -> sin cambios", desde, b.Nombre)
 		return "sin cambios", nil, nil
 	}
 
+	log.Printf("[DB] periodo fechadesde=%s en %q: existe, valores distintos -> actualiza", desde, b.Nombre)
 	if err := b.actualizar(ids, desde, hasta, nuevos); err != nil {
 		return "", nil, err
 	}

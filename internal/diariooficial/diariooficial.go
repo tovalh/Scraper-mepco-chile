@@ -7,13 +7,14 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ledongthuc/pdf"
+
+	"script_combustibles/internal/descarga"
 )
 
 // ErrSinDecreto indica que ninguna edicion del dia trae el decreto: no es un
@@ -63,14 +64,12 @@ var meses = map[string]time.Month{
 	"octubre": time.October, "noviembre": time.November, "diciembre": time.December,
 }
 
-var cliente = &http.Client{Timeout: 45 * time.Second}
-
 // Buscar revisa las ediciones del dia y devuelve el decreto de la ultima que lo traiga.
 func Buscar(dia time.Time) (Periodo, error) {
 	fecha := dia.Format("02-01-2006")
 	portada := fmt.Sprintf("%s/edicionelectronica/index.php?date=%s", baseURL, fecha)
 
-	html, err := bajar(portada)
+	html, err := descarga.Bajar(portada)
 	if err != nil {
 		return Periodo{}, err
 	}
@@ -89,31 +88,33 @@ func Buscar(dia time.Time) (Periodo, error) {
 		ediciones["unica"] = portada
 	}
 
-	log.Printf("Diario Oficial %s: %d edicion(es) %v", fecha, len(orden), orden)
+	log.Printf("[DIARIO] %d edicion(es) encontradas: %v", len(orden), orden)
 
 	var ultimo *Periodo
 	for _, ed := range orden {
-		p, ok, err := buscarEnEdicion(ediciones[ed])
+		log.Printf("[DIARIO] edicion %s: revisando...", ed)
+		p, ok, err := buscarEnEdicion(ed, ediciones[ed])
 		if err != nil {
 			return Periodo{}, err
 		}
 		if !ok {
-			log.Printf("  edicion %s: sin decreto de componente variable", ed)
+			log.Printf("[DIARIO] edicion %s: no trae \"componente variable\", se omite", ed)
 			continue
 		}
 		p.Edicion = ed
-		log.Printf("  edicion %s: CVE-%s, vigencia %s", ed, p.CVE, p.Desde.Format("2006-01-02"))
+		log.Printf("[DIARIO] edicion %s: CVE-%s, vigencia %s -> OK", ed, p.CVE, p.Desde.Format("2006-01-02"))
 		ultimo = &p
 	}
 
 	if ultimo == nil {
 		return Periodo{}, fmt.Errorf("%s: %w", fecha, ErrSinDecreto)
 	}
+	log.Printf("[DIARIO] usando la ultima edicion con decreto: %s (CVE-%s)", ultimo.Edicion, ultimo.CVE)
 	return *ultimo, nil
 }
 
-func buscarEnEdicion(url string) (Periodo, bool, error) {
-	html, err := bajar(url)
+func buscarEnEdicion(ed, url string) (Periodo, bool, error) {
+	html, err := descarga.Bajar(url)
 	if err != nil {
 		return Periodo{}, false, err
 	}
@@ -126,8 +127,9 @@ func buscarEnEdicion(url string) (Periodo, bool, error) {
 	if ruta == "" {
 		return Periodo{}, false, nil
 	}
+	log.Printf("[DIARIO] edicion %s: contiene \"componente variable\"", ed)
 
-	datos, err := bajar(baseURL + ruta)
+	datos, err := descarga.Bajar(baseURL + ruta)
 	if err != nil {
 		return Periodo{}, false, err
 	}
@@ -171,16 +173,24 @@ func parsear(datos []byte) (Periodo, error) {
 	dia, _ := strconv.Atoi(m[1])
 	anio, _ := strconv.Atoi(m[3])
 	p.Desde = time.Date(anio, mes, dia, 0, 0, 0, 0, time.UTC)
+	log.Printf("[DIARIO] PDF: vigencia \"a contar del dia %s de %s de %s\"", m[1], m[2], m[3])
 
 	if p.V93, err = leer(txt, "gasolina automotriz de 93 octanos", BaseGasolina); err != nil {
 		return p, err
 	}
+	log.Printf("[DIARIO] 93 octanos: base=%.4f (ok, ley 18.502) variable=%.4f", BaseGasolina, p.V93)
+
 	if p.V97, err = leer(txt, "gasolina automotriz de 97 octanos", BaseGasolina); err != nil {
 		return p, err
 	}
+	log.Printf("[DIARIO] 97 octanos: base=%.4f (ok, ley 18.502) variable=%.4f", BaseGasolina, p.V97)
+
 	if p.Diesel, err = leer(txt, "petroleo diesel", BaseDiesel); err != nil {
 		return p, err
 	}
+	log.Printf("[DIARIO] diesel: base=%.4f (ok, ley 18.502) variable=%.4f", BaseDiesel, p.Diesel)
+
+	log.Printf("[DIARIO] 95 octanos: no viene en el decreto, se calcula como promedio de 93/97 = %.4f", p.V95())
 	return p, nil
 }
 
@@ -215,37 +225,4 @@ var acentos = strings.NewReplacer(
 func normalizar(s string) string {
 	s = acentos.Replace(strings.ToLower(s))
 	return strings.TrimSpace(reEspacios.ReplaceAllString(s, " "))
-}
-
-func bajar(url string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; mepco-cron/1.0)")
-
-	var ultErr error
-	for intento := 1; intento <= 3; intento++ {
-		if intento > 1 {
-			time.Sleep(time.Duration(intento) * 3 * time.Second)
-		}
-
-		resp, err := cliente.Do(req)
-		if err != nil {
-			ultErr = err
-			continue
-		}
-		b, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			ultErr = err
-			continue
-		}
-		if resp.StatusCode != http.StatusOK {
-			ultErr = fmt.Errorf("HTTP %d", resp.StatusCode)
-			continue
-		}
-		return b, nil
-	}
-	return nil, fmt.Errorf("no se pudo bajar %s: %w", url, ultErr)
 }
