@@ -1,7 +1,6 @@
 .env
 mepco
 mepco.exe
-utm-uf
 utm-uf.exe
 *.exe
 .idea/
