@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -43,17 +44,18 @@ type Periodo struct {
 func (p Periodo) Hasta() time.Time { return p.Desde.AddDate(0, 0, 6) }
 
 // La 95 no viene en el decreto, se calcula como el promedio de 93 y 97.
-func (p Periodo) V95() float64 {
-	v, _ := strconv.ParseFloat(fmt.Sprintf("%.4f", (p.V93+p.V97)/2), 64)
-	return v
-}
+func (p Periodo) V95() float64 { return redondear4((p.V93 + p.V97) / 2) }
+
+// Solo la 95 se redondea, porque es el unico valor calculado: 4 decimales,
+// igual que el decreto y que la columna de la base.
+func redondear4(v float64) float64 { return math.Round(v*10000) / 10000 }
 
 var (
 	reEdiciones = regexp.MustCompile(`index\.php\?date=(\d{2}-\d{2}-\d{4})&(?:amp;)?edition=([^"'&\s]+)&(?:amp;)?v=(\d+)`)
 	rePDF       = regexp.MustCompile(`/publicaciones/\d{4}/\d{2}/\d{2}/[^"'\s]+\.pdf`)
 	reCVE       = regexp.MustCompile(`(\d+)\.pdf$`)
 	reVigencia  = regexp.MustCompile(`a contar del dia (\d{1,2}) de ([a-z]+) de (\d{4})`)
-	reNumero    = regexp.MustCompile(`-?\d+,\d+`)
+	reNumero    = regexp.MustCompile(`-?\d+,\d{4}`)
 	reEspacios  = regexp.MustCompile(`\s+`)
 )
 
@@ -195,26 +197,37 @@ func parsear(datos []byte) (Periodo, error) {
 }
 
 // leer usa la segunda tabla del decreto, donde cada combustible viene como
-// "base variable". Si la base no es la esperada, se leyo mal.
+// "base variable total". El texto del PDF llega sin separadores entre columnas
+// ("6,0000-0,69175,3083"), por eso los numeros se toman con 4 decimales exactos
+// y se valida que base + variable = total: si la fila se leyo mal, no cuadra.
 func leer(txt, marcador string, baseEsperada float64) (float64, error) {
 	i := strings.LastIndex(txt, marcador)
 	if i < 0 {
 		return 0, fmt.Errorf("no encontre %q", marcador)
 	}
 
-	crudos := reNumero.FindAllString(txt[i:], 2)
-	if len(crudos) < 2 {
-		return 0, fmt.Errorf("%q: esperaba 2 numeros, encontre %d", marcador, len(crudos))
+	crudos := reNumero.FindAllString(txt[i:], 3)
+	if len(crudos) < 3 {
+		return 0, fmt.Errorf("%q: esperaba 3 numeros, encontre %d %v", marcador, len(crudos), crudos)
 	}
 
-	base, err := strconv.ParseFloat(strings.ReplaceAll(crudos[0], ",", "."), 64)
-	if err != nil {
-		return 0, err
+	var n [3]float64
+	for k, crudo := range crudos {
+		v, err := strconv.ParseFloat(strings.ReplaceAll(crudo, ",", "."), 64)
+		if err != nil {
+			return 0, fmt.Errorf("%q: numero %q: %w", marcador, crudo, err)
+		}
+		n[k] = v
 	}
+	base, variable, total := n[0], n[1], n[2]
+
 	if base != baseEsperada {
 		return 0, fmt.Errorf("%q: base %.4f, esperaba %.2f", marcador, base, baseEsperada)
 	}
-	return strconv.ParseFloat(strings.ReplaceAll(crudos[1], ",", "."), 64)
+	if math.Abs(base+variable-total) > 0.00001 {
+		return 0, fmt.Errorf("%q: %.4f + %.4f no da %.4f, la fila se leyo mal", marcador, base, variable, total)
+	}
+	return variable, nil
 }
 
 var acentos = strings.NewReplacer(
